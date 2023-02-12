@@ -2,6 +2,9 @@ use std::{future::Future, collections::HashMap, cell::UnsafeCell, task::{Context
 
 use futures::{FutureExt, stream::{FusedStream, Fuse}, Stream, StreamExt, channel::mpsc::{self, UnboundedReceiver}};
 use pin_project::pin_project;
+use serde::de::DeserializeOwned;
+use serde_json::from_str;
+use crate::generic::Channel;
 
 /*
     A simple structure that models a series of channels on which one can (once) assign a listener
@@ -141,21 +144,53 @@ impl<Input: Stream<Item=(u64, String)>, ListenerInput: Stream<Item=ListenerUpdat
 pub struct ListenerController {
     sender: mpsc::UnboundedSender<ListenerUpdate>
 }
+#[must_use]
+pub struct ListenHandle {
+    channel: u64,
+    sender: Option<mpsc::UnboundedSender<ListenerUpdate>>
+}
 impl ListenerController {
-    pub fn listen<F, Fut>(&self, channel: u64, mut listener: F)
+    pub fn listen_raw<F, Fut>(&self, channel: u64, mut listener: F) -> ListenHandle
     where
         F: FnMut(String) -> Fut + Send + 'static,
         Fut: Future<Output=()> + Send + 'static
     {
-        self.listen_boxed(channel, Box::new(move |input| Box::pin(listener(input))));
+        self.listen_boxed(channel, Box::new(move |input| Box::pin(listener(input))))
     }
-    pub fn listen_boxed(&self, channel: u64, listener: ListenerCallback) {
+    pub fn listen_boxed(&self, channel: u64, listener: ListenerCallback) -> ListenHandle {
         drop(self.sender.unbounded_send(ListenerUpdate::Listen(channel, listener)));
+        ListenHandle { channel, sender: Some(self.sender.clone()) }
     }
-    pub fn stop_listening(&self, channel: u64) {
-        drop(self.sender.unbounded_send(ListenerUpdate::StopListening(channel)));
+    pub fn listen<T, F, Fut>(&self, channel: Channel<T>, mut listener: F) -> ListenHandle
+    where
+        T: DeserializeOwned,
+        F: FnMut(T) -> Fut + Send + 'static,
+        Fut: Future<Output=()> + Send + 'static
+    {
+        // TODO: The .unwrap() here has nowhere to go; should probably kill the listener somehow or alert or something...
+        self.listen_raw(channel.0, move |input| listener(from_str(&input).unwrap()))
     }
 }
+impl ListenHandle {
+    fn disconnect_mut(&mut self) {
+        if let Some(sender) = &self.sender {
+            drop(sender.unbounded_send(ListenerUpdate::StopListening(self.channel)));
+        }
+        self.sender = None;
+    }
+    pub fn disconnect(mut self) {
+        self.disconnect_mut()
+    }
+    pub fn detach(mut self) {
+        self.sender = None;
+    }
+}
+impl Drop for ListenHandle {
+    fn drop(&mut self) {
+        self.disconnect_mut()
+    }
+}
+
 #[derive(Clone)]
 pub struct ListenerSender {
     sender: mpsc::UnboundedSender<(u64, String)>
@@ -194,10 +229,9 @@ pub fn create_listener_full() -> FullListenerCreation<impl Future<Output=()> + U
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, self};
 
     use futures::{poll, SinkExt, channel::mpsc::UnboundedSender};
-    use async_mutex::Mutex;
 
     use super::*;
 
@@ -212,19 +246,25 @@ mod tests {
     }
 
     fn setup_echo(channel: u64, controller: &ListenerController, send_result: UnboundedSender<String>) {
-        controller.listen(channel, {
+        let handle = Arc::new(sync::Mutex::new(None::<ListenHandle>));
+        let handle_real = controller.listen_raw(channel, {
             let controller = controller.clone();
+            let handle = handle.clone();
             move |message| {                
                 let mut send_result = send_result.clone();
                 let controller = controller.clone();
+                let handle = handle.clone();
                 async move {
                     drop(send_result.send(message.clone()).await);
                     if message == "Bye" {
-                        controller.stop_listening(channel);
+                        if let Some(handle) = handle.lock().unwrap().take() {
+                            handle.disconnect();
+                        }
                     }
                 }
             }
         });
+        *handle.lock().unwrap() = Some(handle_real);
     }
 
     #[tokio::test]
@@ -289,9 +329,9 @@ mod tests {
         let FullListenerCreation { mut future, controller, sender } = create_listener_full();
         let (send_result, mut results) = mpsc::unbounded();
         let (continue_token, continue_token_receiver) = mpsc::unbounded::<()>();
-        controller.listen(0, {
+        controller.listen_raw(0, {
             let controller = controller.clone();
-            let continue_token_receiver = Arc::new(Mutex::new(continue_token_receiver));
+            let continue_token_receiver = Arc::new(async_mutex::Mutex::new(continue_token_receiver));
             move |message| {                
                 let mut send_result = send_result.clone();
                 let controller = controller.clone();
@@ -301,7 +341,7 @@ mod tests {
                     continue_token_receiver.lock().await.next().await;
                 }
             }
-        });
+        }).detach();
         // Check that the first future processes immediately.
         sender.send(0, "Hey".into());
         assert_eq!(poll!(&mut future), Poll::Pending);

@@ -1,5 +1,4 @@
 use axum::{Router, routing::{post, get}, Json, Server, extract::WebSocketUpgrade, response::Response};
-use common::channel_listener::{self, DuplexEndpoint};
 use futures::{join, StreamExt};
 use serde::{Serialize, Deserialize};
 use tokio::{sync::mpsc, task::{LocalSet, spawn_local}};
@@ -37,6 +36,7 @@ async fn echo(
    Json(X { value: message.value * 5 })
 }
 
+/*
 async fn websocket(ws: WebSocketUpgrade) -> Response {
     ws.on_upgrade(|ws| async move {
         // TODO: Could add lifetimes various places to avoid the allocation here.
@@ -67,3 +67,4 @@ async fn websocket(ws: WebSocketUpgrade) -> Response {
         drop(ws.into_inner().close().await);
     })
 }
+*/
