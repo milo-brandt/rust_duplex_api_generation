@@ -372,11 +372,9 @@ mod tests {
         let (send_result, mut results) = mpsc::unbounded();
         let (continue_token, continue_token_receiver) = mpsc::unbounded::<()>();
         controller.listen_raw(0, {
-            let controller = controller.clone();
             let continue_token_receiver = Arc::new(async_mutex::Mutex::new(continue_token_receiver));
             move |message| {                
                 let mut send_result = send_result.clone();
-                let controller = controller.clone();
                 let continue_token_receiver = continue_token_receiver.clone();
                 async move {
                     drop(send_result.send(message).await);
