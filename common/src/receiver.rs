@@ -1,4 +1,4 @@
-use std::{future::Future, collections::HashMap, cell::UnsafeCell, task::{Context, Poll}, pin::Pin};
+use std::{future::Future, collections::HashMap, cell::UnsafeCell, task::{Context, Poll}, pin::Pin, sync::{Mutex, Arc}};
 
 use futures::{FutureExt, stream::{FusedStream, Fuse}, Stream, StreamExt, channel::mpsc::{self, UnboundedReceiver}};
 use pin_project::pin_project;
@@ -149,6 +149,10 @@ pub struct ListenHandle {
     channel: u64,
     sender: Option<mpsc::UnboundedSender<ListenerUpdate>>
 }
+#[derive(Clone)]
+pub struct ArcListenHandle {
+    inner: Arc<Mutex<Option<ListenHandle>>>
+}
 impl ListenerController {
     pub fn listen_raw<F, Fut>(&self, channel: u64, mut listener: F) -> ListenHandle
     where
@@ -170,9 +174,49 @@ impl ListenerController {
         // TODO: The .unwrap() here has nowhere to go; should probably kill the listener somehow or alert or something...
         self.listen_raw(channel.0, move |input| listener(from_str(&input).unwrap()))
     }
+    pub fn listen_raw_with_handle<F, Fut>(&self, channel: u64, mut listener: F) -> ArcListenHandle
+    where
+        F: FnMut(String, ArcListenHandle) -> Fut + Send + 'static,
+        Fut: Future<Output=()> + Send + 'static
+    {
+        let arc_handle = ArcListenHandle {
+            inner: Arc::new(Mutex::new(None::<ListenHandle>))
+        };
+        // Initialize data; grab the lock to ensure that nothing funny can happen in the time between when the
+        // listener is connected and when inner value is initialized.
+        {
+            let mut lock = arc_handle.inner.lock().unwrap();
+            *lock = Some(self.listen_raw(channel, {
+                let arc_handle = arc_handle.clone();
+                move |message| listener(message, arc_handle.clone())
+            }));
+        }
+        arc_handle
+
+    }
+    pub fn listen_with_handle<T, F, Fut>(&self, channel: Channel<T>, mut listener: F) -> ArcListenHandle
+    where
+        T: DeserializeOwned,
+        F: FnMut(T, ArcListenHandle) -> Fut + Send + 'static,
+        Fut: Future<Output=()> + Send + 'static
+    {
+        let arc_handle = ArcListenHandle {
+            inner: Arc::new(Mutex::new(None::<ListenHandle>))
+        };
+        // Initialize data; grab the lock to ensure that nothing funny can happen in the time between when the
+        // listener is connected and when inner value is initialized.
+        {
+            let mut lock = arc_handle.inner.lock().unwrap();
+            *lock = Some(self.listen(channel, {
+                let arc_handle = arc_handle.clone();
+                move |message| listener(message, arc_handle.clone())
+            }));
+        }
+        arc_handle
+    }
 }
 impl ListenHandle {
-    fn disconnect_mut(&mut self) {
+    pub fn disconnect_mut(&mut self) {
         if let Some(sender) = &self.sender {
             drop(sender.unbounded_send(ListenerUpdate::StopListening(self.channel)));
         }
@@ -181,13 +225,21 @@ impl ListenHandle {
     pub fn disconnect(mut self) {
         self.disconnect_mut()
     }
-    pub fn detach(mut self) {
+    pub fn detach_mut(&mut self) {
         self.sender = None;
+    }
+    pub fn detach(mut self) {
+        self.detach_mut();
     }
 }
 impl Drop for ListenHandle {
     fn drop(&mut self) {
         self.disconnect_mut()
+    }
+}
+impl ArcListenHandle {
+    pub fn disconnect(self) {
+        self.inner.lock().unwrap().as_mut().unwrap().disconnect_mut()
     }
 }
 
@@ -246,25 +298,15 @@ mod tests {
     }
 
     fn setup_echo(channel: u64, controller: &ListenerController, send_result: UnboundedSender<String>) {
-        let handle = Arc::new(sync::Mutex::new(None::<ListenHandle>));
-        let handle_real = controller.listen_raw(channel, {
-            let controller = controller.clone();
-            let handle = handle.clone();
-            move |message| {                
-                let mut send_result = send_result.clone();
-                let controller = controller.clone();
-                let handle = handle.clone();
-                async move {
-                    drop(send_result.send(message.clone()).await);
-                    if message == "Bye" {
-                        if let Some(handle) = handle.lock().unwrap().take() {
-                            handle.disconnect();
-                        }
-                    }
+        controller.listen_raw_with_handle(channel, move |message, handle| {                
+            let mut send_result = send_result.clone();
+            async move {
+                drop(send_result.send(message.clone()).await);
+                if message == "Bye" {
+                    handle.disconnect()
                 }
             }
         });
-        *handle.lock().unwrap() = Some(handle_real);
     }
 
     #[tokio::test]
