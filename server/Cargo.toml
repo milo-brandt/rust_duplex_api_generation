@@ -14,4 +14,5 @@ pin-project = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 common = { path = "../common" }
+local_channels = { path = "../local_channels" }
 tower-http = { version = "0.3", features = ["cors", "catch-panic"] }
