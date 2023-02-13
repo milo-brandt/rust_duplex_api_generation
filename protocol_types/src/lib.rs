@@ -1,4 +1,6 @@
 pub mod generic;
+use futures::{channel::oneshot, Future, FutureExt};
+use protocol_util::communication_context::Context;
 use serde::{Serialize, Deserialize};
 
 /*
@@ -25,4 +27,19 @@ pub struct RoomRequest {
 pub struct EchoMessage {
     pub message: String,
     pub future: generic::ChannelCoFuture<String>,
+}
+
+pub struct EchoMessageReceived {
+    pub message: String,
+    pub future: oneshot::Sender<String>,
+}
+impl EchoMessage {
+    pub fn receive(self, context: &Context) -> (EchoMessageReceived, impl Future<Output=()> + Send + Unpin + 'static) {
+        let (tx, rx) = oneshot::channel();
+        let message_future = self.future.receive_feed(&context, rx.map(Result::unwrap));
+        (EchoMessageReceived {
+            message: self.message,
+            future: tx
+        }, message_future)
+    }
 }

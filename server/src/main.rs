@@ -1,5 +1,6 @@
 use axum::{Router, routing::{post, get}, Json, Server, extract::{WebSocketUpgrade, ws}, response::Response};
-use futures::{join, StreamExt, SinkExt, future::ready};
+use futures::{join, StreamExt, SinkExt, future::ready, channel::oneshot, FutureExt};
+use protocol_types::generic::ChannelCoStream;
 use protocol_util::{sender::Sender, receiver::{create_listener_full, FullListenerCreation}, communication_context::Context, channel_allocator::{ChannelAllocator, TypedChannelAllocator}};
 use serde::{Serialize, Deserialize};
 use tower_http::{cors::{CorsLayer, Any}, catch_panic::CatchPanicLayer};
@@ -39,19 +40,31 @@ async fn echo(
 }
 
 pub async fn run_service(context: Context, listener_future: impl Future<Output=()> + Unpin + Send) {
-    let echo_channel = context.channel_allocator.incoming::<protocol_types::EchoMessage>();
-    let echo_handle = context.controller.listen(echo_channel, {
+    let (echo_co_channel, echo_channel) = ChannelCoStream::<protocol_types::EchoMessage>::allocate(&context);
+    drop(echo_co_channel); // Part of protocol.
+    let tasks = Arc::new(Mutex::new(Vec::new()));
+    let mut echo_stream = echo_channel.receive_mapped(&context, {
         let context = context.clone();
         move |message| {
-            println!("Received message: {:?}", message.message);
-            let send_back = format!("{}{}", message.message, message.message);
-            // Should really be detaching this; but since it's ready, it's okay to do this this way.
-            let future = message.future.receive_feed(&context, ready(send_back));
-            future
+            let (message, future) = message.receive(&context);
+            tasks.lock().unwrap().push(tokio::spawn(future));
+            message
         }
     });
-    listener_future.await;
-    drop(echo_handle);
+
+    // This won't actually ever complete; should be doing something else, really.
+    join! {
+        listener_future,
+        async move {
+            while let Some(next) = echo_stream.next().await {
+                println!("Received message: {:?}", next.message);
+                let send_back = format!("{}{}", next.message, next.message);
+                let result = next.future.send(send_back);
+                println!("Sent back: {:?}", result);
+            }
+        }
+    };
+    // Need to kill tasks in tasks.
 }
 
 async fn websocket(ws: WebSocketUpgrade) -> Response {

@@ -88,7 +88,7 @@ impl<T: Serialize> ChannelCoStream<T> {
             stream: input,
         }
     }
-    pub fn allocate(self, context: &Context) -> (ChannelCoStream<T>, ChannelStream<T>) {
+    pub fn allocate(context: &Context) -> (ChannelCoStream<T>, ChannelStream<T>) {
         let channel = context.channel_allocator.incoming();
         (ChannelCoStream(channel.clone()), ChannelStream(channel))
     }
@@ -109,7 +109,7 @@ impl<T: DeserializeOwned> ChannelFuture<T> {
         });
         receiver
     }
-    pub fn allocate(self, context: &Context) -> (ChannelFuture<T>, ChannelCoFuture<T>) {
+    pub fn allocate(context: &Context) -> (ChannelFuture<T>, ChannelCoFuture<T>) {
         let channel = context.channel_allocator.outgoing();
         (ChannelFuture(channel.clone()), ChannelCoFuture(channel))
     }
@@ -146,7 +146,7 @@ impl<T: Serialize> ChannelCoFuture<T> {
             future: input,
         }
     }
-    pub fn allocate(self, context: &Context) -> (ChannelCoFuture<T>, ChannelFuture<T>) {
+    pub fn allocate(context: &Context) -> (ChannelCoFuture<T>, ChannelFuture<T>) {
         let channel = context.channel_allocator.incoming();
         (ChannelCoFuture(channel.clone()), ChannelFuture(channel))
     }
