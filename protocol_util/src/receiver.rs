@@ -269,7 +269,7 @@ pub struct FullListenerCreation<F> {
     pub controller: ListenerController,
     pub sender: ListenerSender,
 }
-pub fn create_listener_full() -> FullListenerCreation<impl Future<Output=()> + Unpin> {
+pub fn create_listener_full() -> FullListenerCreation<impl Future<Output=()> + Unpin + Send> {
     let (sender, receiver) = mpsc::unbounded();
     let ListenerCreation { future, controller } = create_listener(receiver);
     FullListenerCreation { future, controller, sender: ListenerSender { sender } }

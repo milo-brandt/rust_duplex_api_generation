@@ -545,6 +545,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "protocol_types"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "pin-project",
+ "protocol_util",
+ "serde",
+]
+
+[[package]]
 name = "protocol_util"
 version = "0.1.0"
 dependencies = [
@@ -667,6 +677,7 @@ dependencies = [
  "itertools",
  "local_channels",
  "pin-project",
+ "protocol_types",
  "protocol_util",
  "serde",
  "serde_json",
