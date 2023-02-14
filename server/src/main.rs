@@ -3,8 +3,9 @@ use futures::{join, StreamExt, SinkExt, future::ready, channel::oneshot, FutureE
 use protocol_types::generic::ChannelCoStream;
 use protocol_util::{sender::Sender, receiver::{create_listener_full, FullListenerCreation}, communication_context::Context, channel_allocator::{ChannelAllocator, TypedChannelAllocator}};
 use serde::{Serialize, Deserialize};
+use tokio::time::sleep;
 use tower_http::{cors::{CorsLayer, Any}, catch_panic::CatchPanicLayer};
-use std::{net::{Ipv4Addr, SocketAddr, IpAddr}, task::{self, Waker}, cell::{UnsafeCell, RefCell}, sync::{Mutex, Arc}};
+use std::{net::{Ipv4Addr, SocketAddr, IpAddr}, task::{self, Waker}, cell::{UnsafeCell, RefCell}, sync::{Mutex, Arc}, time::Duration};
 use futures::channel::mpsc;
 use std::future::Future;
 
@@ -59,6 +60,7 @@ pub async fn run_service(context: Context, listener_future: impl Future<Output=(
             while let Some(next) = echo_stream.next().await {
                 println!("Received message: {:?}", next.message);
                 let send_back = format!("{}{}", next.message, next.message);
+                sleep(Duration::from_secs(1)).await;
                 let result = next.future.send(send_back);
                 println!("Sent back: {:?}", result);
             }

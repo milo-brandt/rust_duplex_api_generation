@@ -15,19 +15,19 @@ Sender must respond to requests to close channels.
 // represent a stream parallel to the message
 #[derive(Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct ChannelStream<T>(Channel<Option<T>>);
+pub struct ChannelStream<T>(pub Channel<Option<T>>);
 // represent a stream antiparallel to the message
 #[derive(Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct ChannelCoStream<T>(Channel<Option<T>>);
+pub struct ChannelCoStream<T>(pub Channel<Option<T>>);
 // represent a oneshot channel parallel to the message
 #[derive(Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct ChannelFuture<T>(Channel<T>);
+pub struct ChannelFuture<T>(pub Channel<T>);
 // represent a oneshot cannel antiparallel to the message
 #[derive(Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct ChannelCoFuture<T>(Channel<T>);
+pub struct ChannelCoFuture<T>(pub Channel<T>);
 
 pub mod received {
 
@@ -48,7 +48,7 @@ impl<T: DeserializeOwned> ChannelStream<T> {
         });
         receiver
     }
-    pub fn allocate(self, context: &Context) -> (ChannelStream<T>, ChannelCoStream<T>) {
+    pub fn allocate(context: &Context) -> (ChannelStream<T>, ChannelCoStream<T>) {
         let channel = context.channel_allocator.outgoing();
         (ChannelStream(channel.clone()), ChannelCoStream(channel))
     }
