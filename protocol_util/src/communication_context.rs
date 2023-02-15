@@ -4,7 +4,10 @@ use std::sync::Arc;
 use futures::Future;
 use futures::channel::mpsc;
 use futures::future::BoxFuture;
+use serde::Serialize;
 
+use crate::base::Channel;
+use crate::generic::SendableAs;
 use crate::receiver::ListenerController;
 use crate::channel_allocator::TypedChannelAllocator;
 use crate::sender::Sender;
@@ -37,7 +40,12 @@ impl Context {
             waiting: RefCell::new(Vec::new()),
         }
     }
-    // Add send in context method here...
+    pub fn send_in_context<T: Serialize, U: SendableAs<T>>(&self, channel: &Channel<T>, value: U) {
+        let defering = self.clone().defering();
+        self.sender.send(channel, value.prepare_in_context(&defering));
+        let (_, futures) = defering.destructure();
+        self.spawner.spawn_boxeds(futures);
+    }
 }
 impl DeferingContext {
     pub fn destructure(self) -> (Context, Vec<BoxedFuture>) {
