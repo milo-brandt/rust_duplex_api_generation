@@ -2,9 +2,9 @@ use std::{future::ready, task::{Poll, self}, pin::Pin};
 
 use futures::{channel::{mpsc, oneshot}, Stream, Future};
 use pin_project::pin_project;
-use protocol_util::{generic::Channel, receiver::ArcListenHandle, sender::Sender};
+use protocol_util::{base::Channel, receiver::ArcListenHandle, sender::Sender};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
-use protocol_util::communication_context::Context;
+use protocol_util::communication_context::DeferingContext;
 
 /*
 Best is probably: receiver is obligated to listen to all messages that arrive.
@@ -34,7 +34,7 @@ pub mod received {
 }
 
 impl<T: DeserializeOwned> ChannelStream<T> {
-    pub fn receive_mapped<Out: Send + 'static, F: FnMut(T) -> Out + Send + 'static>(self, context: &Context, mut map: F) -> mpsc::UnboundedReceiver<Out> {
+    pub fn receive_mapped<Out: Send + 'static, F: FnMut(T) -> Out + Send + 'static>(self, context: &DeferingContext, mut map: F) -> mpsc::UnboundedReceiver<Out> {
         let (mut sender, receiver) = mpsc::unbounded();
         context.controller.listen_with_handle(self.0, move |message, stop_handle| {
             match message {
@@ -48,7 +48,7 @@ impl<T: DeserializeOwned> ChannelStream<T> {
         });
         receiver
     }
-    pub fn allocate(context: &Context) -> (ChannelStream<T>, ChannelCoStream<T>) {
+    pub fn allocate(context: &DeferingContext) -> (ChannelStream<T>, ChannelCoStream<T>) {
         let channel = context.channel_allocator.outgoing();
         (ChannelStream(channel.clone()), ChannelCoStream(channel))
     }
@@ -81,21 +81,21 @@ impl<T: Serialize, Input: Stream<Item=T>> Future for ChannelCoStreamFuture<T, In
 }
 
 impl<T: Serialize> ChannelCoStream<T> {
-    pub fn receive_feed<Input: Stream<Item=T> + Send>(self, context: &Context, input: Input) -> ChannelCoStreamFuture<T, Input> {
+    pub fn receive_feed<Input: Stream<Item=T> + Send>(self, context: &DeferingContext, input: Input) -> ChannelCoStreamFuture<T, Input> {
         ChannelCoStreamFuture {
             sender: context.sender.clone(),
             channel: self.0,
             stream: input,
         }
     }
-    pub fn allocate(context: &Context) -> (ChannelCoStream<T>, ChannelStream<T>) {
+    pub fn allocate(context: &DeferingContext) -> (ChannelCoStream<T>, ChannelStream<T>) {
         let channel = context.channel_allocator.incoming();
         (ChannelCoStream(channel.clone()), ChannelStream(channel))
     }
 }
 
 impl<T: DeserializeOwned> ChannelFuture<T> {
-    pub fn receive_mapped<Out: Send + 'static, Map: FnOnce(T) -> Out + Send + 'static>(self, context: &Context, map: Map) -> oneshot::Receiver<Out> {
+    pub fn receive_mapped<Out: Send + 'static, Map: FnOnce(T) -> Out + Send + 'static>(self, context: &DeferingContext, map: Map) -> oneshot::Receiver<Out> {
         let (sender, receiver) = oneshot::channel();
         let mut state = Some((sender, map));
         context.controller.listen_with_handle(self.0, move |message, stop_handle| {
@@ -139,14 +139,14 @@ impl<T: Serialize, Input: Future<Output=T>> Future for ChannelCoFutureFuture<T, 
 }
 
 impl<T: Serialize> ChannelCoFuture<T> {
-    pub fn receive_feed<Input: Future<Output=T> + Send>(self, context: &Context, input: Input) -> ChannelCoFutureFuture<T, Input> {
+    pub fn receive_feed<Input: Future<Output=T> + Send>(self, context: &DeferingContext, input: Input) -> ChannelCoFutureFuture<T, Input> {
         ChannelCoFutureFuture {
             sender: context.sender.clone(),
             channel: self.0,
             future: input,
         }
     }
-    pub fn allocate(context: &Context) -> (ChannelCoFuture<T>, ChannelFuture<T>) {
+    pub fn allocate(context: &DeferingContext) -> (ChannelCoFuture<T>, ChannelFuture<T>) {
         let channel = context.channel_allocator.incoming();
         (ChannelCoFuture(channel.clone()), ChannelFuture(channel))
     }

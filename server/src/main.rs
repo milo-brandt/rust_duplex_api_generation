@@ -119,3 +119,10 @@ async fn websocket(ws: WebSocketUpgrade) -> Response {
         drop(ws.close().await);
     })
 }
+
+
+
+/*
+Need to be able to spawn futures (possibly at the end of some window)...
+...listeners can be attached immediately - don't need to be run...
+*/

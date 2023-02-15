@@ -4,7 +4,7 @@ use futures::{FutureExt, stream::{FusedStream, Fuse}, Stream, StreamExt, channel
 use pin_project::pin_project;
 use serde::de::DeserializeOwned;
 use serde_json::from_str;
-use crate::generic::Channel;
+use crate::base::Channel;
 
 /*
     A simple structure that models a series of channels on which one can (once) assign a listener
@@ -13,6 +13,10 @@ and messages will be ignored if not on a listened-to channel.
 
 Callbacks may return futures which are polled to completion before proceeding.
 */
+
+// Safe to do things like: a function that has some internal state, passed to each future
+
+
 type ListenerCallback = Box<dyn FnMut(String) -> Pin<Box<dyn Future<Output=()> + Send>> + Send>;
 pub struct Listener {
     running: Option<Pin<Box<dyn Future<Output=()> + Send>>>,

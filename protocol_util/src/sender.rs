@@ -1,7 +1,7 @@
 use futures::channel::mpsc;
 use serde::Serialize;
 
-use crate::generic::Channel;
+use crate::base::Channel;
 
 #[derive(Clone)]
 pub struct Sender {
