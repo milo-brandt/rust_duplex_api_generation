@@ -43,10 +43,33 @@ impl<T, U: SendableAs<T>> SendableAs<Option<T>> for DefaultSendable<Option<U>> {
         self.0.map(|value| value.prepare_in_context(context))
     }
 }
-impl Receivable for String {
-    type ReceivedAs = String;
+macro_rules! primitive {
+    ($ty:ty) => {
+        impl Receivable for $ty {
+            type ReceivedAs = $ty;
 
-    fn receive_in_context(self, context: &Context) -> Self::ReceivedAs {
-        self
-    }
+            fn receive_in_context(self, _: &Context) -> Self::ReceivedAs {
+                self
+            }
+        }
+    };
 }
+primitive!(String);
+primitive!(u8);
+primitive!(u16);
+primitive!(u32);
+primitive!(u64);
+primitive!(i8);
+primitive!(i16);
+primitive!(i32);
+primitive!(i64);
+primitive!(bool);
+
+/*
+Thoughts: Generics might be somewhat of a poor way to do this; it's hard to get the interface we want - ideally, would like
+to have implementations of Receivable for every primitive type + allow Options to be handled correctly.
+
+Trickiness is in making such a thing friendly to splitting across libraries/modules - may be a question of fancy macros?
+
+Could also accept that the protocol types aren't really types of interest in themselves...
+ */

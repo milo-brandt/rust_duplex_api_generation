@@ -105,7 +105,7 @@ fn main() {
                     Potentially good optimization: wrap the returned RcSignal in something that stops polling once
                     a non-None result is returned. 
                     */
-                    values.modify().push((line.clone(), create_resource(cx, return_future.map(|value| value.unwrap().unwrap()))));
+                    values.modify().push((line.clone(), create_resource(cx, return_future.map(|value| value.unwrap().un))));
                     input_value.set("".to_string());
                 }
             }

@@ -39,13 +39,12 @@ async fn echo(
    Json(X { value: message.value * 5 })
 }
 
-pub async fn run_service(context: Context, listener_future: impl Future<Output=()> + Unpin + Send) {
+pub async fn run_service(context: Context) {
     let echo_channel = ChannelStream::<protocol_types::EchoMessage>(context.channel_allocator.incoming());
     let mut echo_stream = echo_channel.receive_in_context(&context);
 
     // This won't actually ever complete; should be doing something else, really.
-    join! {
-        listener_future,
+    context.spawner.spawn(
         async move {
             while let Some(next) = echo_stream.next().await {
                 println!("Received message: {:?}", next.message);
@@ -55,7 +54,7 @@ pub async fn run_service(context: Context, listener_future: impl Future<Output=(
                 println!("Sent back: {:?}", result);
             }
         }
-    };
+    );
     // Need to kill tasks in tasks.
 }
 
@@ -70,15 +69,23 @@ async fn websocket(ws: WebSocketUpgrade) -> Response {
             controller,
             sender: receiver,
         } = create_listener_full();
+        let handles = Arc::new(Mutex::new(Vec::new()));
         let context = Context {
             channel_allocator: Arc::new(TypedChannelAllocator::new()),
             controller,
             sender,
-            spawner: Spawner::new(|future| drop(tokio::spawn(future)))
+            spawner: Spawner::new({
+                let handles = handles.clone();
+                move |future| {
+                    let join_handle = tokio::spawn(future);
+                    handles.lock().unwrap().push(join_handle);
+                }
+            })
         };
-        let service_future = run_service(context, future);
-
-        let (ws_send, ws_receive, _) = join! {
+        context.spawner.spawn(run_service(context.clone()));
+        context.spawner.spawn(future);
+        // TODO: Fix shutdown here...
+        let (ws_send, ws_receive) = join! {
             async move {
                 loop {
                     match ws_receive.next().await {
@@ -102,8 +109,6 @@ async fn websocket(ws: WebSocketUpgrade) -> Response {
                 }
                 ws_send
             },
-            // run the listener
-            service_future,
         };
         let ws = ws_send.reunite(ws_receive).unwrap();
         // drop the websocket
