@@ -43,7 +43,6 @@ pub async fn run_service(context: Context) {
     let echo_channel = ChannelStream::<protocol_types::EchoMessage>(context.channel_allocator.incoming());
     let mut echo_stream = echo_channel.receive_in_context(&context);
 
-    // This won't actually ever complete; should be doing something else, really.
     context.spawner.spawn(
         async move {
             while let Some(next) = echo_stream.next().await {
@@ -55,7 +54,6 @@ pub async fn run_service(context: Context) {
             }
         }
     );
-    // Need to kill tasks in tasks.
 }
 
 async fn websocket(ws: WebSocketUpgrade) -> Response {
@@ -69,7 +67,7 @@ async fn websocket(ws: WebSocketUpgrade) -> Response {
             controller,
             sender: receiver,
         } = create_listener_full();
-        let handles = Arc::new(Mutex::new(Vec::new()));
+        let handles = Arc::new(Mutex::new(Some(Vec::new())));
         let context = Context {
             channel_allocator: Arc::new(TypedChannelAllocator::new()),
             controller,
@@ -78,7 +76,11 @@ async fn websocket(ws: WebSocketUpgrade) -> Response {
                 let handles = handles.clone();
                 move |future| {
                     let join_handle = tokio::spawn(future);
-                    handles.lock().unwrap().push(join_handle);
+                    if let Some(handles) = &mut *handles.lock().unwrap() {
+                        handles.push(join_handle);
+                    } else {
+                        join_handle.abort();
+                    }
                 }
             })
         };
@@ -110,6 +112,11 @@ async fn websocket(ws: WebSocketUpgrade) -> Response {
                 ws_send
             },
         };
+        // Stop all tasks from this and prevent more from spawning.
+        let tasks = handles.lock().unwrap().take();
+        for task in tasks.unwrap() {
+            task.abort();
+        }
         let ws = ws_send.reunite(ws_receive).unwrap();
         // drop the websocket
         drop(ws.close().await);
