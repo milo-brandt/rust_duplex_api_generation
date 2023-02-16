@@ -43,3 +43,10 @@ impl<T, U: SendableAs<T>> SendableAs<Option<T>> for DefaultSendable<Option<U>> {
         self.0.map(|value| value.prepare_in_context(context))
     }
 }
+impl Receivable for String {
+    type ReceivedAs = String;
+
+    fn receive_in_context(self, context: &Context) -> Self::ReceivedAs {
+        self
+    }
+}

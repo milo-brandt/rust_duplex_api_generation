@@ -1,6 +1,5 @@
-pub mod generic;
 use futures::{channel::oneshot, Future, FutureExt};
-use protocol_util::communication_context::Context;
+use protocol_util::{communication_context::{Context, DeferingContext}, base, generic::{Receivable, SendableAs}};
 use serde::{Serialize, Deserialize};
 
 /*
@@ -26,20 +25,36 @@ pub struct RoomRequest {
 #[derive(Serialize, Deserialize)]
 pub struct EchoMessage {
     pub message: String,
-    pub future: generic::ChannelCoFuture<String>,
+    pub future: base::ChannelCoFuture<String>,
 }
 
-pub struct EchoMessageReceived {
-    pub message: String,
-    pub future: oneshot::Sender<String>,
+pub mod received {
+    use protocol_util::{generic::Receivable, base};
+
+    pub struct EchoMessage {
+        pub message: String,
+        pub future: <base::ChannelCoFuture<String> as Receivable>::ReceivedAs,
+    }
 }
-impl EchoMessage {
-    pub fn receive(self, context: &Context) -> (EchoMessageReceived, impl Future<Output=()> + Send + Unpin + 'static) {
-        let (tx, rx) = oneshot::channel();
-        let message_future = self.future.receive_feed(&context, rx.map(Result::unwrap));
-        (EchoMessageReceived {
+pub mod sendable {
+    pub struct EchoMessage<Future> {
+        pub message: String,
+        pub future: Future
+    }
+}
+
+impl Receivable for EchoMessage {
+    type ReceivedAs = received::EchoMessage;
+
+    fn receive_in_context(self, context: &Context) -> Self::ReceivedAs {
+        received::EchoMessage {
             message: self.message,
-            future: tx
-        }, message_future)
+            future: self.future.receive_in_context(context)
+        }
+    }
+}
+impl<Future: SendableAs<base::ChannelCoFuture<String>>> SendableAs<EchoMessage> for sendable::EchoMessage<Future> {
+    fn prepare_in_context(self, context: &DeferingContext) -> EchoMessage {
+        EchoMessage { message: self.message, future: self.future.prepare_in_context(context) }
     }
 }

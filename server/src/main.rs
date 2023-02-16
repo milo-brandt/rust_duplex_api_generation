@@ -1,7 +1,6 @@
 use axum::{Router, routing::{post, get}, Json, Server, extract::{WebSocketUpgrade, ws}, response::Response};
 use futures::{join, StreamExt, SinkExt, future::ready, channel::oneshot, FutureExt};
-use protocol_types::generic::ChannelCoStream;
-use protocol_util::{sender::Sender, receiver::{create_listener_full, FullListenerCreation}, communication_context::Context, channel_allocator::{ChannelAllocator, TypedChannelAllocator}};
+use protocol_util::{sender::Sender, receiver::{create_listener_full, FullListenerCreation}, communication_context::Context, channel_allocator::{ChannelAllocator, TypedChannelAllocator}, base::{ChannelCoStream, ChannelStream}, generic::Receivable, spawner::Spawner};
 use serde::{Serialize, Deserialize};
 use tokio::time::sleep;
 use tower_http::{cors::{CorsLayer, Any}, catch_panic::CatchPanicLayer};
@@ -41,17 +40,8 @@ async fn echo(
 }
 
 pub async fn run_service(context: Context, listener_future: impl Future<Output=()> + Unpin + Send) {
-    let (echo_co_channel, echo_channel) = ChannelCoStream::<protocol_types::EchoMessage>::allocate(&context);
-    drop(echo_co_channel); // Part of protocol.
-    let tasks = Arc::new(Mutex::new(Vec::new()));
-    let mut echo_stream = echo_channel.receive_mapped(&context, {
-        let context = context.clone();
-        move |message| {
-            let (message, future) = message.receive(&context);
-            tasks.lock().unwrap().push(tokio::spawn(future));
-            message
-        }
-    });
+    let echo_channel = ChannelStream::<protocol_types::EchoMessage>(context.channel_allocator.incoming());
+    let mut echo_stream = echo_channel.receive_in_context(&context);
 
     // This won't actually ever complete; should be doing something else, really.
     join! {
@@ -61,7 +51,7 @@ pub async fn run_service(context: Context, listener_future: impl Future<Output=(
                 println!("Received message: {:?}", next.message);
                 let send_back = format!("{}{}", next.message, next.message);
                 sleep(Duration::from_secs(1)).await;
-                let result = next.future.send(send_back);
+                let result = next.future.channel_send(send_back);
                 println!("Sent back: {:?}", result);
             }
         }
@@ -84,6 +74,7 @@ async fn websocket(ws: WebSocketUpgrade) -> Response {
             channel_allocator: Arc::new(TypedChannelAllocator::new()),
             controller,
             sender,
+            spawner: Spawner::new(|future| drop(tokio::spawn(future)))
         };
         let service_future = run_service(context, future);
 

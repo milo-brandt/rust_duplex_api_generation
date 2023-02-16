@@ -65,7 +65,7 @@ impl DeferingContext {
         }
     }
     pub fn defer_future<F: Future<Output=()> + Send + 'static>(&self, future: F) {
-        self.defer_future_boxed(Box::new(future));
+        self.defer_future_boxed(Box::pin(future));
     }
     pub fn defer_future_boxed(&self, boxed_future: BoxedFuture) {
         self.waiting.borrow_mut().push(boxed_future);

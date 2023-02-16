@@ -1,10 +1,10 @@
 // some sort of executor thing; supports defering
 
-use std::sync::{Arc, Mutex};
+use std::{sync::{Arc, Mutex}, pin::Pin};
 
 use futures::Future;
 
-pub type BoxedFuture = Box<dyn Future<Output=()> + Send + 'static>;
+pub type BoxedFuture = Pin<Box<dyn Future<Output=()> + Send + 'static>>;
 type BoxedFutureSpanwer = Box<dyn FnMut(BoxedFuture) + Send + 'static>;
 
 #[derive(Clone)]
@@ -13,13 +13,13 @@ pub struct Spawner {
 }
 
 impl Spawner {
-    pub fn new<F>(f: impl FnMut(BoxedFuture) + Send + 'static) -> Self {
+    pub fn new(f: impl FnMut(BoxedFuture) + Send + 'static) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Box::new(f)))
         }
     }
     pub fn spawn<Fut: Future<Output=()> + Send + 'static>(&self, future: Fut) {
-        self.spawn_boxed(Box::new(future));
+        self.spawn_boxed(Box::pin(future));
     }
     pub fn spawn_boxed(&self, boxed_future: BoxedFuture) {
         self.inner.lock().unwrap()(boxed_future);

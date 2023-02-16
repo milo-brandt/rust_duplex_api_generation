@@ -3,13 +3,14 @@ use std::time::Duration;
 
 use futures::{StreamExt, join, SinkExt, FutureExt};
 use futures::channel::{mpsc, oneshot};
-use protocol_types::EchoMessage;
-use protocol_types::generic::{ChannelStream, ChannelCoFuture, ChannelCoStream};
+use protocol_types::{EchoMessage, sendable};
+use protocol_util::base::{ChannelCoStream, Channel};
 use protocol_util::channel_allocator::TypedChannelAllocator;
 use protocol_util::communication_context::Context;
-use protocol_util::generic::Channel;
+use protocol_util::generic::{Receivable, DefaultSendable};
 use protocol_util::receiver::{FullListenerCreation, create_listener_full};
 use protocol_util::sender::Sender;
+use protocol_util::spawner::Spawner;
 use reqwasm::websocket;
 use sycamore::prelude::*;
 use sycamore::futures::{spawn_local_scoped, create_resource, spawn_local};
@@ -37,6 +38,7 @@ fn main() {
         channel_allocator: Arc::new(TypedChannelAllocator::new()),
         controller,
         sender,
+        spawner: Spawner::new(spawn_local)
     };
     spawn_local(async move {
         let (ws_send, ws_receive, _) = join! {
@@ -69,11 +71,10 @@ fn main() {
             service_future,
         };
     });
-    let echo_co_channel = ChannelCoStream(Channel(0, Default::default()));
+    let echo_co_channel = ChannelCoStream::<EchoMessage>(Channel(0, Default::default()));
 
-    let (echo_send, echo_receive) = mpsc::unbounded();
+    let echo_send = echo_co_channel.receive_in_context(&context);
 
-    spawn_local(echo_co_channel.receive_feed(&context, echo_receive));
 
 
     sycamore::render(|cx| {
@@ -93,11 +94,10 @@ fn main() {
                 let keyboard_event: KeyboardEvent = event.unchecked_into();
                 if keyboard_event.key() == "Enter" {
                     let line = &*input_value.get();
-                    let (future, echo_co_future) = ChannelCoFuture::allocate(&context);
-                    let return_future = echo_co_future.receive_mapped(&context, |x| x);
-                    drop(echo_send.unbounded_send(EchoMessage {
+                    let (sender, return_future) = oneshot::channel();
+                    drop(echo_send.channel_send(sendable::EchoMessage {
                         message: line.clone(),
-                        future,
+                        future: DefaultSendable(move |value| drop(sender.send(value))),
                     }));
 
                     log::debug!("Sending: {}", line);
@@ -105,7 +105,7 @@ fn main() {
                     Potentially good optimization: wrap the returned RcSignal in something that stops polling once
                     a non-None result is returned. 
                     */
-                    values.modify().push((line.clone(), create_resource(cx, return_future.map(Result::unwrap))));
+                    values.modify().push((line.clone(), create_resource(cx, return_future.map(|value| value.unwrap().unwrap()))));
                     input_value.set("".to_string());
                 }
             }
