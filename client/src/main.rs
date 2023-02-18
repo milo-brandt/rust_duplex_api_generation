@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use futures::{StreamExt, join, SinkExt, FutureExt};
 use futures::channel::{mpsc, oneshot};
-use protocol_types::{EchoMessage, EchoResponseRx, EchoMessageTx};
+use protocol_types::{JoinRoom, JoinRoomTx};
 //use protocol_types::{EchoMessage, EchoMessageTx, EchoResponseRx};
 use protocol_util::base::{ChannelCoStream, Channel};
 use protocol_util::channel_allocator::TypedChannelAllocator;
@@ -13,7 +13,7 @@ use protocol_util::sender::Sender;
 use protocol_util::spawner::Spawner;
 use reqwasm::websocket;
 use sycamore::prelude::*;
-use sycamore::futures::{create_resource, spawn_local};
+use sycamore::futures::{create_resource, spawn_local, spawn_local_scoped};
 use reqwasm::websocket::futures::WebSocket;
 use web_sys::{Event, KeyboardEvent};
 use wasm_bindgen::JsCast;
@@ -70,7 +70,7 @@ fn main() {
             service_future,
         };
     });
-    let echo_co_channel = ChannelCoStream::<EchoMessage>(Channel(0, Default::default()));
+    let echo_co_channel = ChannelCoStream::<JoinRoom>(Channel(0, Default::default()));
 
     let echo_send = echo_co_channel.receive_in_context(&context);
 
@@ -85,42 +85,54 @@ fn main() {
         }); */
 
         let input_value = create_signal(cx, String::new());
-        let values = create_signal(cx, Vec::<(String, RcSignal<Option<String>>)>::new());
+        let messages = create_signal(cx, Vec::<(String, String)>::new());
+        let room = create_signal(cx, None);
+
+        let echo_send = create_ref(cx, echo_send);
 
         let keydown_handler = {
-            let context = context.clone();
             move |event: Event| {
                 let keyboard_event: KeyboardEvent = event.unchecked_into();
                 if keyboard_event.key() == "Enter" {
                     let line = &*input_value.get();
-                    let (sender, return_future) = oneshot::channel();
-                    drop(echo_send.channel_send(EchoMessageTx {
-                        message: line.clone(),
-                        future: DefaultSendable(move |value| drop(sender.send(value))),
-                    }));
-
-                    log::debug!("Sending: {}", line);
-                    /*
-                    Potentially good optimization: wrap the returned RcSignal in something that stops polling once
-                    a non-None result is returned. 
-                    */
-                    values.modify().push((line.clone(), create_resource(cx, return_future.map(|value| {
-                        match value.unwrap().unwrap() {
-                            EchoResponseRx::Alright(value) => format!("OK: {}", value),
-                            EchoResponseRx::UhOh(err) => format!("ERR: {}", err)
+                    if room.get().is_none() {
+                        let split = line.split_once("@");
+                        if let Some((name, channel)) = split {
+                            let (result_tx, result_rx) = oneshot::channel();
+                            echo_send.channel_send(JoinRoomTx {
+                                username: name.to_string(),
+                                room_name: channel.to_string(),
+                                result: result_tx,
+                            });
+                            spawn_local_scoped(cx, async move {
+                                let room_result = result_rx.await.ok().flatten();
+                                if let Some(room_result) = room_result {
+                                    room.set(Some(room_result.send_message));
+                                    messages.set(Vec::new());
+                                    let mut message_channel = room_result.messages;
+                                    let messages = messages.clone();
+                                    while let Some(value) = message_channel.next().await {
+                                        messages.modify().push((value.username, value.message));
+                                    }
+                                }
+                            });
                         }
-                    }))));
-                    input_value.set("".to_string());
+                    } else {
+                        let room_value = room.get();
+                        let room = room_value.as_ref().as_ref().unwrap();
+                        room.channel_send(line.clone());
+                    }
+                    input_value.set("".to_string());                    
                 }
             }
         };
     
         view! { cx,
             Indexed(
-                iterable=values,
-                view=|cx, (send, received)| {
+                iterable=messages,
+                view=|cx, (user, message)| {
                     view! { cx, 
-                        (send) ", " (format!("{:?}", received.get())) br{} 
+                        (user) ": " (message) br{} 
                     }
                 }
             )

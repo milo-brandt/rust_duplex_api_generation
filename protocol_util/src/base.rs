@@ -113,7 +113,7 @@ impl<T: Serialize + Receivable + DeserializeOwned + Send + 'static, U: Sink<T::R
                     let sink = &mut sink.lock().await.0;
                     let message = message.receive_in_context(&context);
                     if let Some(message) = message {
-                        drop(sink.send(message));
+                        drop(sink.send(message).await);
                     } else {
                         drop(sink.close().await);
                         handle.disconnect();
@@ -222,6 +222,25 @@ impl<T: Serialize + Receivable + DeserializeOwned + Send + 'static, U: FnOnce(Op
             move |message, handle| {
                 if let Some(function) = callback.lock().unwrap().take() {
                     function(message.receive_in_context(&context));
+                    handle.disconnect();
+                }
+                ready(())
+            }
+        });
+        ChannelCoFuture(channel)
+    }
+}
+impl<T: Serialize + Receivable + DeserializeOwned + Send + 'static> SendableAs<ChannelCoFuture<T>> for oneshot::Sender<T::ReceivedAs> {
+    fn prepare_in_context(self, context: &DeferingContext) -> ChannelCoFuture<T> {
+        let channel = context.channel_allocator.incoming::<types::Option<T>>();
+        context.controller.listen_with_handle(channel.clone(), {
+            let context = context.context_clone();
+            let callback = Arc::new(Mutex::new(Some(self)));
+            move |message, handle| {
+                if let Some(function) = callback.lock().unwrap().take() {
+                    if let Some(message) = message.receive_in_context(&context) { 
+                        drop(function.send(message));
+                    }
                     handle.disconnect();
                 }
                 ready(())
