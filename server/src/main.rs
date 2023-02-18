@@ -1,6 +1,7 @@
 use axum::{Router, routing::{post, get}, Json, Server, extract::{WebSocketUpgrade, ws}, response::Response};
 use futures::{join, StreamExt, SinkExt, future::ready, channel::oneshot, FutureExt};
-use protocol_util::{sender::Sender, receiver::{create_listener_full, FullListenerCreation}, communication_context::Context, channel_allocator::{ChannelAllocator, TypedChannelAllocator}, base::{ChannelCoStream, ChannelStream}, generic::Receivable, spawner::Spawner};
+use protocol_types::sendable::{EchoResponse, EchoResponseAlright};
+use protocol_util::{sender::Sender, receiver::{create_listener_full, FullListenerCreation}, communication_context::Context, channel_allocator::{ChannelAllocator, TypedChannelAllocator}, base::{ChannelCoStream, ChannelStream}, generic::{Receivable, Infallible}, spawner::Spawner};
 use serde::{Serialize, Deserialize};
 use tokio::time::sleep;
 use tower_http::{cors::{CorsLayer, Any}, catch_panic::CatchPanicLayer};
@@ -49,8 +50,11 @@ pub async fn run_service(context: Context) {
                 println!("Received message: {:?}", next.message);
                 let send_back = format!("{}{}", next.message, next.message);
                 sleep(Duration::from_secs(1)).await;
-                let result = next.future.channel_send(send_back);
-                println!("Sent back: {:?}", result);
+                next.future.channel_send(if send_back.len() > 20 {
+                    EchoResponse::UhOh(send_back.len() as u64)
+                } else {
+                    EchoResponse::Alright(send_back)
+                });
             }
         }
     );

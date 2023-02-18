@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use futures::{StreamExt, join, SinkExt, FutureExt};
 use futures::channel::{mpsc, oneshot};
+use protocol_types::received::EchoResponse;
 use protocol_types::{EchoMessage, sendable};
 use protocol_util::base::{ChannelCoStream, Channel};
 use protocol_util::channel_allocator::TypedChannelAllocator;
@@ -105,7 +106,12 @@ fn main() {
                     Potentially good optimization: wrap the returned RcSignal in something that stops polling once
                     a non-None result is returned. 
                     */
-                    values.modify().push((line.clone(), create_resource(cx, return_future.map(|value| value.unwrap().unwrap()))));
+                    values.modify().push((line.clone(), create_resource(cx, return_future.map(|value| {
+                        match value.unwrap().unwrap() {
+                            EchoResponse::Alright(value) => format!("OK: {}", value),
+                            EchoResponse::UhOh(err) => format!("ERR: {}", err)
+                        }
+                    }))));
                     input_value.set("".to_string());
                 }
             }
