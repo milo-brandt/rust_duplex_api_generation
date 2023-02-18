@@ -26,13 +26,14 @@ fn pretty_print<S: ToString>(code: S) -> io::Result<()> {
 
 #[proc_macro_attribute]
 pub fn protocol_type(attr: TokenStream, item: TokenStream) -> TokenStream {
-    println!("attr: \"{}\"", attr.to_string());
-    println!("item: \"{}\"", item.to_string());
+    // Printing seems to upset rust_analyzer?
+    // println!("attr: \"{}\"", attr.to_string());
+    // println!("item: \"{}\"", item.to_string());
     let input_type: input::Type = parse_macro_input!(item);
     let output_type = output::Type::from_input(input_type);
     // let coro_spec = CoroSpecification::from_definition(test.clone());
 
-    pretty_print(output_type.to_token_stream()).unwrap();
+    // pretty_print(output_type.to_token_stream()).unwrap();
 
     // coro_spec.test_generate().into()
     output_type.to_token_stream().into()
