@@ -1,7 +1,6 @@
 use futures::future::ready;
 use futures::{StreamExt, Sink, SinkExt, Stream, Future};
 use futures::channel::{mpsc, oneshot};
-use pin_project::pin_project;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;

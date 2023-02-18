@@ -1,9 +1,9 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures::{StreamExt, join, SinkExt, FutureExt};
 use futures::channel::{mpsc, oneshot};
-use protocol_types::{EchoMessage, EchoMessageTx, EchoResponseRx};
+use protocol_types::{EchoMessage, EchoResponseRx, EchoMessageTx};
+//use protocol_types::{EchoMessage, EchoMessageTx, EchoResponseRx};
 use protocol_util::base::{ChannelCoStream, Channel};
 use protocol_util::channel_allocator::TypedChannelAllocator;
 use protocol_util::communication_context::Context;
@@ -13,9 +13,8 @@ use protocol_util::sender::Sender;
 use protocol_util::spawner::Spawner;
 use reqwasm::websocket;
 use sycamore::prelude::*;
-use sycamore::futures::{spawn_local_scoped, create_resource, spawn_local};
+use sycamore::futures::{create_resource, spawn_local};
 use reqwasm::websocket::futures::WebSocket;
-use gloo_timers::future::sleep;
 use web_sys::{Event, KeyboardEvent};
 use wasm_bindgen::JsCast;
 
