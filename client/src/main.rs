@@ -3,8 +3,7 @@ use std::time::Duration;
 
 use futures::{StreamExt, join, SinkExt, FutureExt};
 use futures::channel::{mpsc, oneshot};
-use protocol_types::received::EchoResponse;
-use protocol_types::{EchoMessage, sendable};
+use protocol_types::{EchoMessage, EchoMessageTx, EchoResponseRx};
 use protocol_util::base::{ChannelCoStream, Channel};
 use protocol_util::channel_allocator::TypedChannelAllocator;
 use protocol_util::communication_context::Context;
@@ -96,7 +95,7 @@ fn main() {
                 if keyboard_event.key() == "Enter" {
                     let line = &*input_value.get();
                     let (sender, return_future) = oneshot::channel();
-                    drop(echo_send.channel_send(sendable::EchoMessage {
+                    drop(echo_send.channel_send(EchoMessageTx {
                         message: line.clone(),
                         future: DefaultSendable(move |value| drop(sender.send(value))),
                     }));
@@ -108,8 +107,8 @@ fn main() {
                     */
                     values.modify().push((line.clone(), create_resource(cx, return_future.map(|value| {
                         match value.unwrap().unwrap() {
-                            EchoResponse::Alright(value) => format!("OK: {}", value),
-                            EchoResponse::UhOh(err) => format!("ERR: {}", err)
+                            EchoResponseRx::Alright(value) => format!("OK: {}", value),
+                            EchoResponseRx::UhOh(err) => format!("ERR: {}", err)
                         }
                     }))));
                     input_value.set("".to_string());
