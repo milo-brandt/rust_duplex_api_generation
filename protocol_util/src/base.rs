@@ -239,7 +239,7 @@ Can receive a Future as a oneshot channel
 impl<T: DeserializeOwned + Receivable> Receivable for ChannelFuture<T>
 where T::ReceivedAs: Send + 'static
 {
-    type ReceivedAs = oneshot::Receiver<Option<T::ReceivedAs>>;
+    type ReceivedAs = oneshot::Receiver<T::ReceivedAs>;
 
     fn receive_in_context(self, context: &Context) -> Self::ReceivedAs {
         let (sender, receiver) = oneshot::channel();
@@ -248,7 +248,10 @@ where T::ReceivedAs: Send + 'static
             let mut sender = Some(sender);
             move |message, handle| {
                 if let Some(sender) = sender.take() {
-                    drop(sender.send(message.receive_in_context(&context)));
+                    // Send a message if one is received! Otherwise, we'll just drop the sender.
+                    if let Some(message) = message.receive_in_context(&context) {
+                        drop(sender.send(message));
+                    }
                     handle.disconnect();
                 }
                 ready(())
@@ -258,18 +261,32 @@ where T::ReceivedAs: Send + 'static
     }
 }
 
-// Could allow U::Output to be SendableAs<Option<T>>...
 impl<T: Serialize + Send + 'static, U: Future + Unpin + Send + 'static> SendableAs<ChannelFuture<T>> for DefaultSendable<U>
-where U::Output: SendableAs<T>
+where U::Output: SendableAs<types::Option<T>>
 {
-    fn prepare_in_context(mut self, context: &DeferingContext) -> ChannelFuture<T> {
+    fn prepare_in_context(self, context: &DeferingContext) -> ChannelFuture<T> {
         let channel = context.channel_allocator.outgoing::<types::Option<T>>();
         context.defer_future({
             let context = context.context_clone();
             let channel = channel.clone();
             async move {
                 let result = self.0.await;
-                context.send_in_context(&channel, Some(result));
+                context.send_in_context(&channel, result);
+            }
+        });
+        ChannelFuture(channel)
+    }
+}
+// Extra impl to get around the Result<T, Cancelled> issue...
+impl<T: Serialize + Send + 'static, U: SendableAs<T> + Send + 'static> SendableAs<ChannelFuture<T>> for oneshot::Receiver<U> {
+    fn prepare_in_context(self, context: &DeferingContext) -> ChannelFuture<T> {
+        let channel = context.channel_allocator.outgoing::<types::Option<T>>();
+        context.defer_future({
+            let context = context.context_clone();
+            let channel = channel.clone();
+            async move {
+                let result = self.await;
+                context.send_in_context(&channel, result.ok());
             }
         });
         ChannelFuture(channel)

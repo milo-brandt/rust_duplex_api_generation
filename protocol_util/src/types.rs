@@ -55,6 +55,23 @@ impl<T: DeserializeOwned + Receivable> Receivable for Box<T> {
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(transparent)]
+pub struct Result<T, E>(pub std::result::Result<T, E>);
+
+impl<T: Serialize, TS: SendableAs<T>, E: Serialize, ES: SendableAs<E>> SendableAs<Result<T, E>> for std::result::Result<TS, ES> {
+    fn prepare_in_context(self, context: &crate::communication_context::DeferingContext) -> Result<T, E> {
+        Result(self.map(|value| value.prepare_in_context(context)).map_err(|err| err.prepare_in_context(context)))
+    }
+}
+impl<T: DeserializeOwned + Receivable, E: DeserializeOwned + Receivable> Receivable for Result<T, E> {
+    type ReceivedAs = std::result::Result<T::ReceivedAs, E::ReceivedAs>;
+
+    fn receive_in_context(self, context: &crate::communication_context::Context) -> Self::ReceivedAs {
+        self.0.map(|value| value.receive_in_context(context)).map_err(|err| err.receive_in_context(context))
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(transparent)]
 pub struct Primitive<T>(pub T);
 
 impl<T: Serialize> SendableAs<Primitive<T>> for T {
@@ -69,3 +86,5 @@ impl<T: DeserializeOwned + Send> Receivable for Primitive<T> {
         self.0
     }
 }
+
+
