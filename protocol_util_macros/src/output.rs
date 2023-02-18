@@ -1,6 +1,6 @@
 use crate::input;
-use proc_macro2::TokenStream;
-use quote::{quote, TokenStreamExt, ToTokens};
+use proc_macro2::{TokenStream, Span};
+use quote::{quote, TokenStreamExt, ToTokens, format_ident};
 use convert_case::{Casing, Case};
 use syn::token::Struct;
 
@@ -27,8 +27,8 @@ pub enum Type {
 
 impl Structure {
     pub fn from_input(value: input::Structure) -> Self {
-        let rx_name = syn::Ident::new(&format!("{}Rx", value.name.to_string()), value.name.span());
-        let tx_name = syn::Ident::new(&format!("{}Tx", value.name.to_string()), value.name.span());
+        let rx_name = format_ident!("{}Rx", value.name);
+        let tx_name = format_ident!("{}Tx", value.name);
         Self {
             name: value.name,
             rx_name,
@@ -89,7 +89,7 @@ impl Structure {
     fn generate_sent_struct(&self) -> TokenStream {
         let name = &self.tx_name;
         let (members, type_params): (Vec<_>, Vec<_>) = self.members.iter().map(|(name, ty)| {
-            let type_name = syn::Ident::new(&name.to_string().from_case(Case::Snake).to_case(Case::UpperCamel), name.span());
+            let type_name = syn::Ident::new(&name.to_string().from_case(Case::Snake).to_case(Case::UpperCamel), Span::call_site());
             (quote! {
                 pub #name: #type_name
             }, quote! {
@@ -106,7 +106,7 @@ impl Structure {
         let name = &self.name;
         let tx_name = &self.tx_name;
         let (members, rest): (Vec<_>, Vec<_>) = self.members.iter().map(|(name, ty)| {
-            let type_name = syn::Ident::new(&name.to_string().from_case(Case::Snake).to_case(Case::UpperCamel), name.span());
+            let type_name = syn::Ident::new(&name.to_string().from_case(Case::Snake).to_case(Case::UpperCamel), Span::call_site());
             (quote! {
                 #name: self.#name.prepare_in_context(context)
             }, (quote! {
@@ -128,8 +128,8 @@ impl Structure {
 
 impl Enum {
     pub fn from_input(value: input::Enum) -> Self {
-        let rx_name = syn::Ident::new(&format!("{}Rx", value.name.to_string()), value.name.span());
-        let tx_name = syn::Ident::new(&format!("{}Tx", value.name.to_string()), value.name.span());
+        let rx_name = format_ident!("{}Rx", value.name);
+        let tx_name = format_ident!("{}Tx", value.name);
         Self {
             name: value.name,
             rx_name,
@@ -190,7 +190,7 @@ impl Enum {
     fn generate_sent_struct(&self) -> TokenStream {
         let name = &self.tx_name;
         let (variants, type_params): (Vec<_>, Vec<_>) = self.variants.iter().map(|(variant, ty)| {
-            let type_name = syn::Ident::new(&variant.to_string(), name.span());
+            let type_name = syn::Ident::new(&variant.to_string(), Span::call_site());
             (quote! {
                 #variant(#type_name)
             }, quote! {
@@ -207,7 +207,7 @@ impl Enum {
         let name = &self.name;
         let tx_name = &self.tx_name;
         let (variants, rest): (Vec<_>, Vec<_>) = self.variants.iter().map(|(variant, ty)| {
-            let type_name = syn::Ident::new(&variant.to_string(), name.span());
+            let type_name = syn::Ident::new(&variant.to_string(), Span::call_site());
             (quote! {
                 #tx_name::#variant(value) => #name::#variant(value.prepare_in_context(context))
             }, (quote! {
@@ -229,7 +229,7 @@ impl Enum {
         let tx_name = &self.tx_name;
         let aliases = (0..self.variants.len()).map(|index| {
             let variant = &self.variants[index].0;
-            let name = syn::Ident::new(&format!("{}{}", self.tx_name.to_string(), variant.to_string()), self.tx_name.span());
+            let name = format_ident!("{}{}", self.tx_name, variant.to_string());
             let output_generics = (0..self.variants.len()).map(|inner_index| {
                 if index == inner_index {
                     quote!{ #variant }
