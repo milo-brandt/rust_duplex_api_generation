@@ -1,5 +1,5 @@
 use futures::{channel::oneshot, Future, FutureExt};
-use protocol_util::{communication_context::{Context, DeferingContext}, base, generic::{Receivable, SendableAs}};
+use protocol_util::{communication_context::{Context, DeferingContext}, base, generic::{Receivable, SendableAs}, types};
 use serde::{Serialize, Deserialize};
 
 /*
@@ -24,21 +24,21 @@ pub struct RoomRequest {
 
 #[derive(Serialize, Deserialize)]
 pub struct EchoMessage {
-    pub message: String,
-    pub future: base::ChannelCoFuture<String>,
+    pub message: types::Primitive<String>,
+    pub future: base::ChannelCoFuture<types::Primitive<String>>,
 }
 
 pub mod received {
-    use protocol_util::{generic::Receivable, base};
+    use protocol_util::{base, types};
 
     pub struct EchoMessage {
         pub message: String,
-        pub future: <base::ChannelCoFuture<String> as Receivable>::ReceivedAs,
+        pub future: base::ChannelCoFutureSender<types::Primitive<String>>,
     }
 }
 pub mod sendable {
-    pub struct EchoMessage<Future> {
-        pub message: String,
+    pub struct EchoMessage<Message, Future> {
+        pub message: Message,
         pub future: Future
     }
 }
@@ -48,13 +48,13 @@ impl Receivable for EchoMessage {
 
     fn receive_in_context(self, context: &Context) -> Self::ReceivedAs {
         received::EchoMessage {
-            message: self.message,
+            message: self.message.receive_in_context(context),
             future: self.future.receive_in_context(context)
         }
     }
 }
-impl<Future: SendableAs<base::ChannelCoFuture<String>>> SendableAs<EchoMessage> for sendable::EchoMessage<Future> {
+impl<Message: SendableAs<types::Primitive<String>>, Future: SendableAs<base::ChannelCoFuture<types::Primitive<String>>>> SendableAs<EchoMessage> for sendable::EchoMessage<Message, Future> {
     fn prepare_in_context(self, context: &DeferingContext) -> EchoMessage {
-        EchoMessage { message: self.message, future: self.future.prepare_in_context(context) }
+        EchoMessage { message: self.message.prepare_in_context(context), future: self.future.prepare_in_context(context) }
     }
 }

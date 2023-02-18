@@ -9,7 +9,8 @@ use std::sync::{Mutex, Arc};
 use std::task::{self, Poll};
 use crate::communication_context::{Context, DeferingContext};
 
-use crate::generic::{Receivable, SendableAs, DefaultSendable};
+use crate::generic::{Receivable, SendableAs, DefaultSendable, Infallible};
+use crate::types;
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(transparent)]
@@ -23,19 +24,19 @@ impl<T> Clone for Channel<T> {
 
 #[derive(Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct ChannelStream<T>(pub Channel<Option<T>>);
+pub struct ChannelStream<T>(pub Channel<types::Option<T>>);
 // represent a stream antiparallel to the message
 #[derive(Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct ChannelCoStream<T>(pub Channel<Option<T>>);
+pub struct ChannelCoStream<T>(pub Channel<types::Option<T>>);
 // represent a oneshot channel parallel to the message
 #[derive(Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct ChannelFuture<T>(pub Channel<Option<T>>);
+pub struct ChannelFuture<T>(pub Channel<types::Option<T>>);
 // represent a oneshot cannel antiparallel to the message
 #[derive(Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct ChannelCoFuture<T>(pub Channel<Option<T>>);
+pub struct ChannelCoFuture<T>(pub Channel<types::Option<T>>);
 
 /*
     Trait implementations
@@ -49,19 +50,19 @@ Can receive a CoStream as a Sink
  */
 pub struct ChannelCoStreamSender<T: Serialize> {
     context: Context,
-    channel: Channel<Option<T>>,
+    channel: Channel<types::Option<T>>,
     closed: bool,
 }
 impl<T: Serialize> ChannelCoStreamSender<T> {
     // TODO: Handle errors?
     pub fn channel_send(&self, value: impl SendableAs<T>) {
-        self.context.send_in_context(&self.channel, DefaultSendable(Some(value)))
+        self.context.send_in_context(&self.channel, Some(value))
     }
 }
 impl<T: Serialize> Drop for ChannelCoStreamSender<T> {
     fn drop(&mut self) {
         if !self.closed {
-            self.context.sender.send(&self.channel, None);
+            self.context.send_in_context(&self.channel, None::<Infallible>);
         }
     }
 }
@@ -78,7 +79,7 @@ impl<T: Serialize, U: SendableAs<T>> Sink<U> for ChannelCoStreamSender<T> {
     }
 
     fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
-        self.context.sender.send(&self.channel, None);
+        self.context.send_in_context(&self.channel, None::<Infallible>);
         Poll::Ready(Ok(()))
     }
 
@@ -86,7 +87,7 @@ impl<T: Serialize, U: SendableAs<T>> Sink<U> for ChannelCoStreamSender<T> {
         Poll::Ready(Ok(()))
     }
 }
-impl<T: Serialize + Send + 'static> Receivable for ChannelCoStream<T> {
+impl<T: DeserializeOwned + Serialize + Send + 'static> Receivable for ChannelCoStream<T> {
     type ReceivedAs = ChannelCoStreamSender<T>;
     fn receive_in_context(self, context: &Context) -> Self::ReceivedAs {
         ChannelCoStreamSender {
@@ -98,9 +99,9 @@ impl<T: Serialize + Send + 'static> Receivable for ChannelCoStream<T> {
 }
 
 // We don't need inherently need Unpin here, but it's easier to write...
-impl<T: Receivable + DeserializeOwned + Send + 'static, U: Sink<T::ReceivedAs> + Send + Unpin + 'static> SendableAs<ChannelCoStream<T>> for DefaultSendable<U> {
+impl<T: Serialize + Receivable + DeserializeOwned + Send + 'static, U: Sink<T::ReceivedAs> + Send + Unpin + 'static> SendableAs<ChannelCoStream<T>> for DefaultSendable<U> {
     fn prepare_in_context(self, context: &DeferingContext) -> ChannelCoStream<T> {
-        let channel = context.channel_allocator.incoming::<Option<T>>();
+        let channel = context.channel_allocator.incoming::<types::Option<T>>();
         context.controller.listen_with_handle(channel.clone(), {
             let context = context.context_clone();
             let sink = Arc::new(async_mutex::Mutex::new(self));
@@ -111,8 +112,9 @@ impl<T: Receivable + DeserializeOwned + Send + 'static, U: Sink<T::ReceivedAs> +
                     // Safe to lock as these futures must execute sequentially.
                     // Could probably do try_lock
                     let sink = &mut sink.lock().await.0;
+                    let message = message.receive_in_context(&context);
                     if let Some(message) = message {
-                        drop(sink.send(message.receive_in_context(&context)));
+                        drop(sink.send(message));
                     } else {
                         drop(sink.close().await);
                         handle.disconnect();
@@ -139,9 +141,9 @@ where T::ReceivedAs: Send + 'static
         context.controller.listen_with_handle(self.0, {
             let context = context.clone();
             move |message, handle| {
-                match message {
+                match message.receive_in_context(&context) {
                     Some(message) => {
-                        drop(sender.unbounded_send(message.receive_in_context(&context)))
+                        drop(sender.unbounded_send(message))
                     },
                     None => {
                         drop(sender.close_channel());
@@ -159,18 +161,18 @@ impl<T: Serialize + Send + 'static, U: Stream + Unpin + Send + 'static> Sendable
 where U::Item: SendableAs<T>
 {
     fn prepare_in_context(mut self, context: &DeferingContext) -> ChannelStream<T> {
-        let channel = context.channel_allocator.outgoing::<Option<T>>();
+        let channel = context.channel_allocator.outgoing::<types::Option<T>>();
         context.defer_future({
             let context = context.context_clone();
             let channel = channel.clone();
             async move {
                 loop {
                     let item = self.0.next().await;
-                    let context = context.clone().defering();
-                    let value = item.map(|item| item.prepare_in_context(&context));
-                    context.sender.send(&channel, value);
-                    let (context, futures) = context.destructure();
-                    context.spawner.spawn_boxeds(futures)
+                    let is_none = item.is_none();
+                    context.send_in_context(&channel, item);
+                    if is_none {
+                        break;
+                    }
                 }
             }
         });
@@ -185,23 +187,23 @@ Can receive a co-future as an object with a send method.
  */
 pub struct ChannelCoFutureSender<T: Serialize> {
     context: Context,
-    channel: Channel<Option<T>>,
+    channel: Channel<types::Option<T>>,
     closed: bool,
 }
 impl<T: Serialize> ChannelCoFutureSender<T> {
     pub fn channel_send(mut self, value: impl SendableAs<T>) {
-        self.context.send_in_context(&self.channel, DefaultSendable(Some(value)));
+        self.context.send_in_context(&self.channel, Some(value));
         self.closed = true;
     }
 }
 impl<T: Serialize> Drop for ChannelCoFutureSender<T> {
     fn drop(&mut self) {
         if !self.closed {
-            self.context.sender.send(&self.channel, None);
+            self.context.send_in_context(&self.channel, None::<Infallible>);
         }
     }
 }
-impl<T: Serialize + Send + 'static> Receivable for ChannelCoFuture<T> {
+impl<T: DeserializeOwned + Serialize + Send + 'static> Receivable for ChannelCoFuture<T> {
     type ReceivedAs = ChannelCoFutureSender<T>;
     fn receive_in_context(self, context: &Context) -> Self::ReceivedAs {
         ChannelCoFutureSender {
@@ -212,15 +214,15 @@ impl<T: Serialize + Send + 'static> Receivable for ChannelCoFuture<T> {
     }
 }
 // TODO - could support async functions here. Dunno if it's worth it.
-impl<T: Receivable + DeserializeOwned + Send + 'static, U: FnOnce(Option<T::ReceivedAs>) + Send + Unpin + 'static> SendableAs<ChannelCoFuture<T>> for DefaultSendable<U> {
+impl<T: Serialize + Receivable + DeserializeOwned + Send + 'static, U: FnOnce(Option<T::ReceivedAs>) + Send + Unpin + 'static> SendableAs<ChannelCoFuture<T>> for DefaultSendable<U> {
     fn prepare_in_context(self, context: &DeferingContext) -> ChannelCoFuture<T> {
-        let channel = context.channel_allocator.incoming::<Option<T>>();
+        let channel = context.channel_allocator.incoming::<types::Option<T>>();
         context.controller.listen_with_handle(channel.clone(), {
             let context = context.context_clone();
             let callback = Arc::new(Mutex::new(Some(self.0)));
             move |message, handle| {
                 if let Some(function) = callback.lock().unwrap().take() {
-                    function(message.map(|value| value.receive_in_context(&context)));
+                    function(message.receive_in_context(&context));
                     handle.disconnect();
                 }
                 ready(())
@@ -247,7 +249,7 @@ where T::ReceivedAs: Send + 'static
             let mut sender = Some(sender);
             move |message, handle| {
                 if let Some(sender) = sender.take() {
-                    drop(sender.send(message.map(|value| value.receive_in_context(&context))));
+                    drop(sender.send(message.receive_in_context(&context)));
                     handle.disconnect();
                 }
                 ready(())
@@ -262,13 +264,13 @@ impl<T: Serialize + Send + 'static, U: Future + Unpin + Send + 'static> Sendable
 where U::Output: SendableAs<T>
 {
     fn prepare_in_context(mut self, context: &DeferingContext) -> ChannelFuture<T> {
-        let channel = context.channel_allocator.outgoing::<Option<T>>();
+        let channel = context.channel_allocator.outgoing::<types::Option<T>>();
         context.defer_future({
             let context = context.context_clone();
             let channel = channel.clone();
             async move {
                 let result = self.0.await;
-                context.send_in_context(&channel, DefaultSendable(Some(result)));
+                context.send_in_context(&channel, Some(result));
             }
         });
         ChannelFuture(channel)
